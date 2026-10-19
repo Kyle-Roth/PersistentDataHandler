@@ -183,7 +183,7 @@ E_PersistentHandlerState.IDLE:
         IF sBootDataPath <> '' THEN
             sPath := sBootDataPath;
         ELSE
-            sPath := CONCAT(CONCAT('C:\ProgramData\Beckhoff\TwinCAT\3.1\Boot\Plc\Port_', UINT_TO_STRING(nPort)), '.bootdata');
+            sPath := CONCAT(CONCAT('\Plc\Port_', UINT_TO_STRING(nPort)), '.bootdata');
         END_IF
 		
         fbWritePersist(START := FALSE);
@@ -215,6 +215,7 @@ E_PersistentHandlerState.OPEN_READ:
 	fbOpen(sNetId := '',
 		   sPathName := sPath,
 		   nMode := FOPEN_MODEREAD OR FOPEN_MODEBINARY,
+		   ePath := PATH_BOOTPATH,
 		   tTimeout := tTimeout,
 		   bExecute := TRUE,
 		   hFile => hFile);
@@ -348,7 +349,7 @@ E_PersistentHandlerState.OPEN_WRITE:
     fbOpen(sNetId := '',
 		   sPathName := sPath,
 		   nMode := FOPEN_MODEREAD OR FOPEN_MODEPLUS OR FOPEN_MODEBINARY,   // "r+b": update in place
-		   ePath := PATH_GENERIC,
+		   ePath := PATH_BOOTPATH,
 		   tTimeout := tTimeout,
 		   bExecute := TRUE,
 		   hFile => hFile);

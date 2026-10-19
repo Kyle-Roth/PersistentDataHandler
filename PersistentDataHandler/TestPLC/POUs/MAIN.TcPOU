@@ -16,8 +16,7 @@ END_VAR
     <Implementation>
       <ST><![CDATA[
 persistanceHandler(bEnable := enable,
-				   bReinit := reinit,
-				   sBootDataPath := 'C:\ProgramData\Beckhoff\TwinCAT\3.1\Runtimes\UmRT_Default\3.1\Boot\Plc\Port_852.bootdata');]]></ST>
+				   bReinit := reinit);]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
