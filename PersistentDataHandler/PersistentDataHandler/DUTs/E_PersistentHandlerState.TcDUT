@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="E_PersistentHandlerState" Id="{a9e7da6e-434d-4119-8b59-5ca51cbd4934}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_PersistentHandlerState :
+(
+    IDLE := 0,
+    WRITE_PERSIST,      // FB_WritePersistentData running
+    OPEN_READ,          // opening .bootdata for reading
+    READ_FILE,          // reading whole file into aFile
+    PARSE,              // building the variable table
+    RESOLVE,            // ADS symbol lookup per variable
+    MONITOR,            // comparing live values with aFile
+    OPEN_WRITE,         // opening .bootdata for in-place update
+    SEEK,               // seeking to a changed value
+    WRITE_DATA,         // writing a changed value
+    WRITE_DONE,         // batch finished, back to MONITOR
+    CLOSE,              // closing the file, then go to eAfterClose
+    FAULT
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

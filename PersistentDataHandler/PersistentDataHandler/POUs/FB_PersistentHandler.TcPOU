@@ -1,0 +1,598 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_PersistentHandler" Id="{20cdd4a2-f816-4c66-8a1d-ecc5b71fe932}" SpecialFunc="None">
+    <Declaration><![CDATA[// Function block to monitor persistent variables and
+// write only variables as they change
+FUNCTION_BLOCK FB_PersistentHandler
+VAR_INPUT
+    bEnable           : BOOL;              // TRUE: initialise, then monitor
+    bReinit           : BOOL;              // rising edge: rewrite file and rebuild table (e.g. after an online change)
+    sBootDataPath     : T_MaxString;       // '' = C:\TwinCAT\3.1\Boot\Port_<port>.bootdata
+    tMinWriteInterval : TIME := T#1S;      // minimum time between file updates
+    tTimeout          : TIME := T#5S;      // timeout for ADS and file operations
+END_VAR
+VAR_OUTPUT
+    bReady       : BOOL;            // initialised and monitoring
+    bBusy        : BOOL;            // initialising or writing
+    bError       : BOOL;
+    nErrorId     : UDINT;
+    sErrorInfo   : T_MaxString;
+    nVarCount    : UDINT;           // persistent variables found in the file
+    nWriteCount  : UDINT;           // number of file update batches since init
+END_VAR
+VAR CONSTANT
+    cMaxFileSize             : UDINT := 65536;   // raise if your .bootdata is bigger
+    cMaxVars                 : UDINT := 512;
+    cMaxVarSize              : UDINT := 4096;    // largest single persistent variable
+    cMaxLevels               : UDINT := 15;
+    cSymInfoSize             : UDINT := 2048;
+    ADSIGRP_SYM_INFOBYNAMEEX : UDINT := 16#F009;
+END_VAR
+VAR
+	eState      : E_PersistentHandlerState := E_PersistentHandlerState.IDLE;
+	eNext		: E_PersistentHandlerState;
+   	nPort       : UINT;
+    sPath       : T_MaxString;
+    hFile       : UINT;
+
+    aFile       : ARRAY[0..cMaxFileSize - 1] OF BYTE;   // in-memory image of the .bootdata file
+    nFileLen    : UDINT;
+    aVars       : ARRAY[1..cMaxVars] OF ST_PersistentVariableEntry;
+    aTmp        : ARRAY[0..cMaxVarSize - 1] OF BYTE;    // live value just read
+    aSymInfo    : ARRAY[0..cSymInfoSize - 1] OF BYTE;   // ADS symbol info reply
+	
+	// loop holder vars
+	nIndex        : UDINT;
+    nSymSize    : UDINT;
+    bAnyDirty   : BOOL;
+    bReinitReq  : BOOL;
+	
+	// function blocks used
+	fbWritePersist : FB_WritePersistentData;
+    fbOpen         : FB_FileOpen;
+    fbRead         : FB_FileRead;
+    fbSeek         : FB_FileSeek;
+    fbWrite        : FB_FileWrite;
+    fbClose        : FB_FileClose;
+    fbAdsRdWrt     : ADSRDWRT;
+    fbAdsRead      : ADSREAD;
+    tonWrite       : TON;
+    rtReinit       : R_TRIG;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(******************************************************************************************
+
+   1. Calls FB_WritePersistentData once to create a fresh Port_<port>.bootdata file
+   2. Builds table of every persistent variable from reading bootdata file:
+        - full name, byte offset of its value in the file, and size
+   3. Looks up each variable's ADS index group/offset by name
+   4. Cyclically reads each variable and compares with bootdata file.
+   5. Changed values are modified in bootdata file in place (seek + write of only those bytes), at most once per tMinWriteInterval.
+   
+ ******************************************************************************************)
+
+rtReinit(CLK := bReinit);
+IF rtReinit.Q THEN
+    bReinitReq := TRUE;
+END_IF
+tonWrite(IN := TRUE, PT := tMinWriteInterval);
+
+THIS^.CyclicLogic();
+
+(* =====================================================================================
+   TwinCAT 3 persistent data file format  (Port_<port>.bootdata)
+   -------------------------------------------------------------------------------------
+   All integers are little-endian. Strings are ASCII and NUL-terminated.
+   Names and values are padded with zeros to the next 4-byte boundary.
+
+   FILE LAYOUT
+     +--------------------------+
+     | File header     12 bytes |
+     | Type section    variable |   one record per data type used
+     | Entry header     8 bytes |
+     | Entry section   variable |   one record per persistent symbol
+     +--------------------------+
+
+   FILE HEADER
+     0   CHAR[4]  'TC3='                 magic
+     4   UDINT    format version         (3)
+     8   UDINT    type section length    in bytes
+
+   TYPE SECTION  (ADS AdsDatatypeEntry records, back to back)
+     +0  UDINT  record length            +24 UDINT  ADS data type id
+     +16 UDINT  size in bytes            +28 UDINT  flags (16#80 = has type GUID)
+     +32 UINT   name length              +38 UINT   array dimensions
+     +34 UINT   base-type name length    +40 UINT   sub-item count
+     +36 UINT   comment length
+     +42 name, base-type name and comment (each NUL-terminated), then
+         array info (8 bytes per dimension), sub-item records,
+         16-byte type GUID, attributes (e.g. DisplayMinValue)
+     The type GUID links each variable in the entry section to its type.
+
+   ENTRY HEADER
+     UDINT  number of entries
+     UDINT  entry section length in bytes
+
+   ENTRY RECORD
+     +0  UDINT   entry size              total record length, multiple of 4
+     +4  UDINT   data size               value size in bytes (0 for groups)
+     +8  BYTE    level                   0 = top level, n = child of level n-1
+     +9  BYTE    flags                   16#80 = group node, 16#40 = variable
+     +10 UINT    name length             without the NUL
+     +12 name + NUL, padded to 4 bytes
+     Variables only:
+         value bytes, padded to 4 bytes
+         16-byte type GUID (last 16 bytes of the record)
+
+   NAMES
+     Level-0 entries hold the full name ('GVL.bInit', 'MAIN.fbAxis').
+     Deeper entries hold only a suffix ('.nSpeed'), which is appended to the
+     name of the nearest preceding entry one level up:
+        level 0  group     'MAIN.fbAxis'
+        level 1  variable  '.nSpeed'      ->  MAIN.fbAxis.nSpeed
+
+   EXAMPLE  (INT variable, 15-character suffix)
+     30 00 00 00              entry size  = 48
+     02 00 00 00              data size   = 2
+     01                       level       = 1
+     40                       flags       = variable
+     0F 00                    name length = 15
+     '.persistent_ex1' 00     name (16 bytes)
+     39 30 00 00              value 12345 (16#3039) + 2 bytes padding
+     <16 bytes>               type GUID -> INT
+                              12 + 16 + 4 + 16 = 48 bytes
+
+   EDITING NOTES
+     - There is no checksum. A value can be overwritten in place as long as
+       its size does not change; sizes and offsets are never modified.
+     - The runtime reads this file at startup and rewrites it on shutdown or
+       when FB_WritePersistentData is called.
+   ===================================================================================== *)]]></ST>
+    </Implementation>
+    <Folder Name="00 - Private Methods" Id="{80cf954b-988c-4a79-a3f0-b53e2d605dc0}" />
+    <Method Name="CloseFile" Id="{4ea8ac56-772e-4633-b653-3123b8023dd3}" FolderPath="00 - Private Methods\">
+      <Declaration><![CDATA[METHOD PRIVATE CloseFile
+VAR_INPUT
+    eNextState : E_PersistentHandlerState;    // state to enter after the file is closed
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[eState := E_PersistentHandlerState.CLOSE;
+eNext := eNextState;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="CyclicLogic" Id="{f3800e21-ea5d-4393-aace-c5f9716be621}" FolderPath="00 - Private Methods\">
+      <Declaration><![CDATA[METHOD PRIVATE CyclicLogic : BOOL
+VAR_INST
+	bEnableTrigger : R_TRIG;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[bEnableTrigger(CLK := bEnable);
+CASE eState OF
+
+E_PersistentHandlerState.IDLE:
+	// waiting for bEnable
+    IF bEnableTrigger.Q THEN
+		// initialize variables for run
+        bReinitReq  := FALSE;
+        bError      := FALSE;
+        nErrorId    := 0;
+        sErrorInfo  := '';
+        nVarCount   := 0;
+        nWriteCount := 0;
+        nPort := TwinCAT_SystemInfoVarList._AppInfo.AdsPort;
+        IF sBootDataPath <> '' THEN
+            sPath := sBootDataPath;
+        ELSE
+            sPath := CONCAT(CONCAT('C:\ProgramData\Beckhoff\TwinCAT\3.1\Boot\Plc\Port_', UINT_TO_STRING(nPort)), '.bootdata');
+        END_IF
+		
+        fbWritePersist(START := FALSE);
+        eState := E_PersistentHandlerState.WRITE_PERSIST;
+    END_IF
+
+
+E_PersistentHandlerState.WRITE_PERSIST:
+	// initialize bootdata file using fbWritePersistent function block
+	fbWritePersist(NETID := '',
+				   PORT := nPort,
+				   MODE := SPDM_2PASS,
+				   TMOUT := tTimeout,
+				   START := TRUE);
+	
+    IF NOT fbWritePersist.BUSY THEN
+        fbWritePersist(START := FALSE);
+		
+        IF fbWritePersist.ERR THEN
+            SetError(fbWritePersist.ERRID, 'FB_WritePersistentData failed');
+        ELSE
+            fbOpen(bExecute := FALSE);
+            eState := E_PersistentHandlerState.OPEN_READ;
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.OPEN_READ:
+	// open file for reading
+	fbOpen(sNetId := '',
+		   sPathName := sPath,
+		   nMode := FOPEN_MODEREAD OR FOPEN_MODEBINARY,
+		   tTimeout := tTimeout,
+		   bExecute := TRUE,
+		   hFile => hFile);
+	
+    IF NOT fbOpen.bBusy THEN
+        fbOpen(bExecute := FALSE);
+		
+        IF fbOpen.bError THEN
+            SetError(fbOpen.nErrId, CONCAT('Cannot open ', sPath));
+        ELSE
+            fbRead(bExecute := FALSE);
+            eState := E_PersistentHandlerState.READ_FILE;
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.READ_FILE:
+	// read entire file to be parsed
+	fbRead(sNetId := '',
+		   hFile := hFile,
+		   pReadBuff := ADR(aFile),
+		   cbReadLen := SIZEOF(aFile),
+		   tTimeout := tTimeout,
+		   bExecute := TRUE);
+	
+    IF NOT fbRead.bBusy THEN
+        fbRead(bExecute := FALSE);
+		
+        IF fbRead.bError THEN
+            SetError(fbRead.nErrId, 'Cannot read .bootdata file');
+        ELSIF fbRead.cbRead >= SIZEOF(aFile) THEN
+            SetError(16#8003, 'File larger than cMaxFileSize');
+        ELSE
+            nFileLen := fbRead.cbRead;
+            CloseFile(E_PersistentHandlerState.PARSE);
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.PARSE:
+	// parse bootdata file into seperate Vars
+    IF Parse() THEN
+        IF nVarCount > 0 THEN
+            nIndex := 1;
+		 	fbAdsRdWrt(WRTRD := FALSE);
+            eState := E_PersistentHandlerState.RESOLVE;
+        ELSE
+            bReady := TRUE;                       // nothing to monitor
+            eState := E_PersistentHandlerState.IDLE; // TODO: maybe monitor?
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.RESOLVE:
+	// resolve Index Group, Offset, and Size of aVar[nIndex] with ADS symbol lookup
+	fbAdsRdWrt(NETID    := '',
+			   PORT     := nPort,
+			   IDXGRP   := ADSIGRP_SYM_INFOBYNAMEEX,
+			   IDXOFFS  := 0,
+			   WRITELEN := INT_TO_UDINT(LEN(aVars[nIndex].sName)) + 1,    // name incl. NUL
+			   READLEN  := SIZEOF(aSymInfo),
+			   SRCADDR  := ADR(aVars[nIndex].sName),
+			   DESTADDR := ADR(aSymInfo),
+			   WRTRD    := TRUE,
+			   TMOUT    := tTimeout);
+	
+    IF NOT fbAdsRdWrt.BUSY THEN
+        fbAdsRdWrt(WRTRD := FALSE);
+		
+        IF fbAdsRdWrt.ERR THEN
+            SetError(fbAdsRdWrt.ERRID, CONCAT('ADS symbol lookup failed: ', aVars[nIndex].sName));
+        ELSE
+            // reply is an AdsSymbolEntry: +0 entryLength, +4 indexGroup, +8 indexOffset, +12 size
+            MEMCPY(ADR(aVars[nIndex].nIdxGrp),  ADR(aSymInfo[4]),  4);
+            MEMCPY(ADR(aVars[nIndex].nIdxOffs), ADR(aSymInfo[8]),  4);
+            MEMCPY(ADR(nSymSize),             ADR(aSymInfo[12]), 4);
+			
+            IF nSymSize <> aVars[nIndex].nDataSize THEN
+                SetError(16#8006, CONCAT('Size in file differs from PLC: ', aVars[nIndex].sName));
+            ELSIF nIndex < nVarCount THEN
+                nIndex := nIndex + 1;
+            ELSE
+				// finished resolve
+                nIndex      := 1;
+                bAnyDirty := FALSE;
+                bReady    := TRUE;
+                fbAdsRead(READ := FALSE);
+                eState := E_PersistentHandlerState.MONITOR;
+            END_IF
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.MONITOR:
+	// check variables for changes (TODO: only checks one variable per cycle. maybe make more efficient)
+	fbAdsRead(NETID    := '',
+			  PORT     := nPort,
+			  IDXGRP   := aVars[nIndex].nIdxGrp,
+			  IDXOFFS  := aVars[nIndex].nIdxOffs,
+			  LEN      := aVars[nIndex].nDataSize,
+			  DESTADDR := ADR(aTmp),
+			  READ     := TRUE,
+			  TMOUT    := tTimeout);
+	  
+	IF NOT fbAdsRead.BUSY THEN
+		fbAdsRead(READ := FALSE);
+		
+		IF fbAdsRead.ERR THEN
+			SetError(fbAdsRead.ERRID, CONCAT('ADS read failed: ', aVars[nIndex].sName));
+		ELSE
+			IF MEMCMP(ADR(aTmp), ADR(aFile[aVars[nIndex].nDataOffset]), aVars[nIndex].nDataSize) <> 0 THEN // variables aren't identical. write to file
+				MEMCPY(ADR(aFile[aVars[nIndex].nDataOffset]), ADR(aTmp), aVars[nIndex].nDataSize);
+				aVars[nIndex].bDirty := TRUE;
+				bAnyDirty    := TRUE;
+			END_IF
+
+			IF nIndex < nVarCount THEN
+				nIndex := nIndex + 1;
+			ELSE
+				nIndex := 1;                    // full pass complete
+			END_IF
+
+			IF NOT bEnable OR bReinitReq THEN
+				bReady := FALSE;
+				eState := E_PersistentHandlerState.IDLE;
+			ELSIF bAnyDirty AND nIndex = 1 AND tonWrite.Q THEN
+				fbOpen(bExecute := FALSE);
+				eState := E_PersistentHandlerState.OPEN_WRITE;
+			END_IF
+		END_IF
+	END_IF
+
+E_PersistentHandlerState.OPEN_WRITE:
+	// open file to write persistent variables that have been changed
+    fbOpen(sNetId := '',
+		   sPathName := sPath,
+		   nMode := FOPEN_MODEREAD OR FOPEN_MODEPLUS OR FOPEN_MODEBINARY,   // "r+b": update in place
+		   ePath := PATH_GENERIC,
+		   tTimeout := tTimeout,
+		   bExecute := TRUE,
+		   hFile => hFile);
+	
+    IF NOT fbOpen.bBusy THEN
+        fbOpen(bExecute := FALSE);
+		
+        IF fbOpen.bError THEN
+            SetError(fbOpen.nErrId, CONCAT('Cannot open for writing: ', sPath));
+        ELSE
+            IF NextDirty() THEN
+                fbSeek(bExecute := FALSE);
+                eState := E_PersistentHandlerState.SEEK;
+            ELSE
+                CloseFile(E_PersistentHandlerState.WRITE_DONE);
+            END_IF
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.SEEK:
+	// seek to offset of next variable to write
+	fbSeek(sNetId := '',
+		   hFile := hFile,
+		   nSeekPos := UDINT_TO_DINT(aVars[nIndex].nDataOffset),
+	   	   eOrigin := SEEK_SET,
+		   tTimeout := tTimeout,
+		   bExecute := TRUE);
+	
+    IF NOT fbSeek.bBusy THEN
+        fbSeek(bExecute := FALSE);
+		
+        IF fbSeek.bError THEN
+            SetError(fbSeek.nErrId, 'File seek failed');
+        ELSE
+            fbWrite(bExecute := FALSE);
+            eState := E_PersistentHandlerState.WRITE_DATA;
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.WRITE_DATA:
+	// write next persistent variable
+    fbWrite(sNetId := '',
+			hFile := hFile,
+			pWriteBuff := ADR(aFile[aVars[nIndex].nDataOffset]),
+			cbWriteLen := aVars[nIndex].nDataSize,
+			tTimeout := tTimeout,
+			bExecute := TRUE);
+	
+    IF NOT fbWrite.bBusy THEN
+        fbWrite(bExecute := FALSE);
+		
+        IF fbWrite.bError THEN
+            SetError(fbWrite.nErrId, CONCAT('File write failed: ', aVars[nIndex].sName));
+        ELSE
+            aVars[nIndex].bDirty := FALSE;
+            
+            IF NextDirty() THEN
+                eState := E_PersistentHandlerState.SEEK;
+            ELSE
+                CloseFile(E_PersistentHandlerState.WRITE_DONE);    // close flushes the data to disk
+            END_IF
+        END_IF
+    END_IF
+
+E_PersistentHandlerState.WRITE_DONE:
+	// done updating changed variables. continue monitoring
+    nWriteCount := nWriteCount + 1;
+    bAnyDirty   := FALSE;
+    tonWrite(IN := FALSE);
+    nIndex := 1;
+    eState := E_PersistentHandlerState.MONITOR;
+
+E_PersistentHandlerState.CLOSE:
+	fbClose(sNetId := '', hFile := hFile, tTimeout := tTimeout, bExecute := TRUE);
+
+	IF NOT fbClose.bBusy THEN
+		fbClose(bExecute := FALSE);
+		hFile := 0;
+		
+		IF fbClose.bError AND NOT bError THEN
+			SetError(fbClose.nErrId, 'File close failed');
+			eState := E_PersistentHandlerState.FAULT;
+		ELSE
+			eState := eNext;
+		END_IF
+	END_IF
+E_PersistentHandlerState.FAULT:
+    bReady := FALSE;
+    IF bReinitReq THEN
+        eState := E_PersistentHandlerState.IDLE;
+    END_IF
+END_CASE
+
+bBusy := eState <> E_PersistentHandlerState.IDLE
+     AND eState <> E_PersistentHandlerState.MONITOR
+     AND eState <> E_PersistentHandlerState.FAULT;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="NextDirty" Id="{30dfe5c5-ea53-4d8c-98ee-ed2050c4a5a2}" FolderPath="00 - Private Methods\">
+      <Declaration><![CDATA[// Advances nIdx to the next dirty variable (starting at nIdx). FALSE if none left.
+METHOD PRIVATE NextDirty : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WHILE nIndex <= nVarCount DO
+    IF aVars[nIndex].bDirty THEN
+        NextDirty := TRUE;
+        RETURN;
+    END_IF
+    nIndex := nIndex + 1;
+END_WHILE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Parse" Id="{983769dc-9d98-464f-99e5-7985e95bd855}" FolderPath="00 - Private Methods\">
+      <Declaration><![CDATA[// Walks the entry section of aFile and fills aVars / nVarCount.
+METHOD PRIVATE Parse : BOOL
+VAR
+    nPos    : UDINT;
+    nEnd    : UDINT;
+    nEntrySize    : UDINT;
+    nDataSize    : UDINT;
+    nNameLength     : UDINT;
+    nDataOffet   : UDINT;
+    nLevel    : BYTE;
+    nFlags  : BYTE;
+    sTmp    : T_MaxString;
+	
+	nTypeSectionLength	: UDINT;
+	nEntrySectionLength : UDINT;
+END_VAR
+VAR_INST
+	aPrefix     : ARRAY[0..cMaxLevels] OF T_MaxString;  // full name per nesting level
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[nVarCount := 0;
+
+// check header
+STRNCPY(ADR(sTmp), ADR(aFile[0]), 5);
+IF nFileLen < 20 OR sTmp <> 'TC3=' THEN //aFile[0] <> 16#54 OR aFile[1] <> 16#43 OR aFile[2] <> 16#33 OR aFile[3] <> 16#3D THEN
+    SetError(16#8001, 'Not a TC3 persistent file (no TC3= header)');
+    RETURN;
+END_IF
+
+MEMCPY(ADR(nTypeSectionLength), ADR(aFile[8]), 4);
+nPos := 12 + nTypeSectionLength; // skip header + type section
+
+// check entry section header written to file
+IF nPos + 8 > nFileLen THEN
+    SetError(16#8002, 'File truncated (entry section header)');
+    RETURN;
+END_IF
+
+MEMCPY(ADR(nEntrySectionLength), ADR(aFile[nPos + 4]), 4);
+nPos := nPos + 8; // skip entry section header
+nEnd := nPos + nEntrySectionLength; // end of entry section (should be end of file)
+
+// check all entries written to file
+IF nEnd > nFileLen THEN
+    SetError(16#8002, 'File truncated (entry section)');
+    RETURN;
+END_IF
+
+
+// parse variable entries
+WHILE nPos < nEnd DO
+    IF nPos + 12 > nEnd THEN
+        SetError(16#8002, 'Corrupt entry header');
+        RETURN;
+    END_IF
+    
+	// grab variable entry header
+	MEMCPY(ADR(nEntrySize), ADR(aFile[nPos]), 4);
+    MEMCPY(ADR(nDataSize), ADR(aFile[nPos + 4]), 4);
+    nLevel   := aFile[nPos + 8];
+    nFlags := aFile[nPos + 9];
+	MEMCPY(ADR(nNameLength), ADR(aFile[nPos + 10]), 2);
+	
+    IF nEntrySize < 12 OR nPos + nEntrySize > nEnd OR nLevel > cMaxLevels THEN
+        SetError(16#8002, 'Corrupt entry');
+        RETURN;
+    ELSIF nNameLength > 255 THEN
+        SetError(16#8007, 'Entry name longer than 255 characters');
+        RETURN;
+    END_IF
+
+	// grab variable entry name
+	STRNCPY(ADR(sTmp), ADR(aFile[nPos + 12]), nNameLength + 1);
+	
+    // Level 0 stores the full name, deeper levels store only ".suffix"
+    IF nLevel = 0 THEN
+        aPrefix[0] := sTmp;
+    ELSE
+        IF LEN(aPrefix[nLevel - 1]) + LEN(sTmp) > 255 THEN
+            SetError(16#8007, CONCAT('Name longer than 255 characters under ', aPrefix[nLevel - 1]));
+            RETURN;
+        END_IF
+		
+        aPrefix[nLevel] := CONCAT(aPrefix[nLevel - 1], sTmp);
+    END_IF
+	
+
+    IF (nFlags = 16#40) AND nDataSize > 0 THEN            // variable with data
+        nDataOffet := nPos + 12 + ((nNameLength + 4) AND 16#FFFFFFFC);    // name + NUL, padded to 4
+        IF nDataOffet + nDataSize > nPos + nEntrySize THEN
+            SetError(16#8002, CONCAT('Corrupt data size: ', aPrefix[nLevel]));
+            RETURN;
+        END_IF
+        IF nVarCount >= cMaxVars THEN
+            SetError(16#8004, 'More persistent variables than cMaxVars');
+            RETURN;
+        END_IF
+        IF nDataSize > cMaxVarSize THEN
+            SetError(16#8005, CONCAT('Variable larger than cMaxVarSize: ', aPrefix[nLevel]));
+            RETURN;
+        END_IF
+        nVarCount := nVarCount + 1;
+        aVars[nVarCount].sName       := aPrefix[nLevel];
+        aVars[nVarCount].nDataOffset := nDataOffet;
+        aVars[nVarCount].nDataSize   := nDataSize;
+        aVars[nVarCount].bDirty      := FALSE;
+    END_IF
+
+    nPos := nPos + nEntrySize;
+END_WHILE
+
+Parse := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetError" Id="{edc48c54-88bc-4742-8b3a-056a65448568}" FolderPath="00 - Private Methods\">
+      <Declaration><![CDATA[METHOD PRIVATE SetError
+VAR_INPUT
+    nId   : UDINT;
+    sInfo : T_MaxString;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[bError     := TRUE;
+nErrorId   := nId;
+sErrorInfo := sInfo;
+bReady     := FALSE;
+IF hFile <> 0 THEN
+    CloseFile(E_PersistentHandlerState.FAULT);    // never leave a file handle open
+ELSE
+    eState := E_PersistentHandlerState.FAULT;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

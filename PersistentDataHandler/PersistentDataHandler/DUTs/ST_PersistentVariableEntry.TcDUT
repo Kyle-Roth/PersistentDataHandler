@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_PersistentVariableEntry" Id="{7886998a-bbb0-4b45-a2c3-d414e1816861}">
+    <Declaration><![CDATA[TYPE ST_PersistentVariableEntry :
+STRUCT
+    sName       : T_MaxString;  // full path, e.g. MAIN.example.persistent_ex1
+    nDataOffset : UDINT;        // byte offset of the value inside the .bootdata file
+    nDataSize   : UDINT;        // value size in bytes
+    nIdxGrp     : UDINT;        // ADS index group of the live variable
+    nIdxOffs    : UDINT;        // ADS index offset of the live variable
+    bDirty      : BOOL;         // changed in memory, not yet written to the file
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

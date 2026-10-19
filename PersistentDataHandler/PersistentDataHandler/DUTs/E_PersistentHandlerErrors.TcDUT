@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="E_PersistentHandlerErrors" Id="{e9bd16ac-8d72-41fa-b0f4-b16f436bffc8}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_PersistentHandlerError :
+(
+    NO_ERROR          := 0,
+    INVALID_FILE      := 16#8001, // missing "TC3=" header: not a bootdata file
+    FILE_CORRUPT      := 16#8002, // file corrupt or truncated
+    FILE_TOO_LARGE    := 16#8003, // file larger than cMaxFileSize
+    TOO_MANY_VARS     := 16#8004, // more than cMaxVars variables
+    VAR_TOO_LARGE     := 16#8005, // variable larger than cMaxVarSize
+    VAR_SIZE_MISMATCH := 16#8006, // size in file <> size in PLC
+    NAME_TOO_LONG     := 16#8007  // name longer than 255 characters
+) UDINT;
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

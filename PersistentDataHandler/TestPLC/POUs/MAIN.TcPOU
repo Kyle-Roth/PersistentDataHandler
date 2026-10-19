@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{9cbcfa1e-4c83-4412-9b51-508f27990c15}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	example : FB_Example;
+	
+	wroteData : BOOL;
+	loadedData : BOOL;
+	
+	persistanceHandler : FB_PersistentHandler;
+	enable	: BOOL := TRUE;
+	reinit	: BOOL := FALSE;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+persistanceHandler(bEnable := enable,
+				   bReinit := reinit,
+				   sBootDataPath := 'C:\ProgramData\Beckhoff\TwinCAT\3.1\Runtimes\UmRT_Default\3.1\Boot\Plc\Port_852.bootdata');]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

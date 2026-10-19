@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Example" Id="{835cf410-ead8-48b0-85bf-3947854c84b8}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Example
+VAR PERSISTENT
+	persist_int 	: INT;
+	persist_str 	: T_MaxString;
+	persist_float	: REAL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<TcSmItem xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.beckhoff.com/schemas/2012/07/TcSmProject" TcSmVersion="1.0" TcVersion="3.1.4026.27" ClassName="CNestedPlcProjDef">
+	<Project GUID="{ED202908-088D-432C-AC8F-F7A58573A0DE}" Name="PersistentDataHandler" PrjFilePath="..\..\PersistentDataHandler\PersistentDataHandler.plcproj" TmcFilePath="..\..\PersistentDataHandler\PersistentDataHandler.tmc" ReloadTmc="true" AmsPort="851" FileArchiveSettings="#x000e" SymbolicMapping="true">
+		<Instance File="PersistentDataHandler Instance.xti"/>
+	</Project>
+</TcSmItem>
