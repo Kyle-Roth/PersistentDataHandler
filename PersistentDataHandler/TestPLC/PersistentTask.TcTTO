@@ -2,7 +2,7 @@
 <TcPlcObject Version="1.1.0.1">
   <Task Name="PersistentTask" Id="{7aeec949-1b3e-402a-8fd3-012eaa3f9e9a}">
     <!--CycleTime in micro seconds.-->
-    <CycleTime>1000</CycleTime>
+    <CycleTime>200</CycleTime>
     <Priority>1</Priority>
     <PouCall>
       <Name>PersistentCaller</Name>

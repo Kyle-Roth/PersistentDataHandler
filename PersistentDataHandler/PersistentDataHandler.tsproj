@@ -2,11 +2,15 @@
 <TcSmProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.beckhoff.com/schemas/2012/07/TcSmProject" TcSmVersion="1.0" TcVersion="3.1.4026.27">
 	<Project ProjectGUID="{F89A9DB9-BD88-42B7-88B1-3DB541AAED93}" TargetNetId="5.134.125.51.1.1" Target64Bit="true" ShowHideConfigurations="#x3c7">
 		<System>
+			<Settings MaxCpus="4" NonWinCpus="2">
+				<Cpu CpuId="2"/>
+				<Cpu CpuId="3" BaseTime="2000"/>
+			</Settings>
 			<Tasks>
 				<Task Id="3" Priority="20" CycleTime="100000" AmsPort="350" AdtTasks="true">
 					<Name>PlcTask</Name>
 				</Task>
-				<Task Id="4" Priority="1" CycleTime="10000" AmsPort="351" AdtTasks="true">
+				<Task Id="4" Priority="1" CycleTime="2000" AmsPort="351" Affinity="#x00000008" AdtTasks="true">
 					<Name>PersistentTask</Name>
 				</Task>
 			</Tasks>
@@ -15,5 +19,8 @@
 			<Project File="PersistentDataHandler.xti"/>
 			<Project File="TestPLC.xti"/>
 		</Plc>
+		<Io>
+			<Device File="Device 1 (NOV-DP-RAM).xti" Id="1"/>
+		</Io>
 	</Project>
 </TcSmProject>

@@ -7,10 +7,15 @@ VAR PERSISTENT
 	persist_str 	: T_MaxString;
 	persist_float	: REAL;
 END_VAR
+VAR RETAIN
+	retain_int 		: INT;
+	retain_str 		: T_MaxString;
+	retain_float	: REAL;
+END_VAR
 VAR 
-	non_per			: INT;
-	non_per2		: LREAL;
-	timer			: TON;
+	non_per		: INT;
+	non_per2	: LREAL;
+	timer		: TON;
 END_VAR
 ]]></Declaration>
     <Implementation>

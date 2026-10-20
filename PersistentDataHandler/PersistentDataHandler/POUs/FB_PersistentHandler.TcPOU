@@ -29,6 +29,8 @@ VAR CONSTANT
     ADSIGRP_SYM_INFOBYNAMEEX : UDINT := 16#F009;
 END_VAR
 VAR
+	tOpen, tWritten, tClosed: BOOL;	
+
 	eState      : E_PersistentHandlerState := E_PersistentHandlerState.IDLE;
 	eNext		: E_PersistentHandlerState;
    	nPort       : UINT;
@@ -70,12 +72,6 @@ END_VAR]]></Declaration>
    5. Changed values are modified in bootdata file in place (seek + write of only those bytes), at most once per tMinWriteInterval.
    
  ******************************************************************************************)
-
-rtReinit(CLK := bReinit);
-IF rtReinit.Q THEN
-    bReinitReq := TRUE;
-END_IF
-tonWrite(IN := TRUE, PT := tMinWriteInterval);
 
 THIS^.CyclicLogic();
 
@@ -171,7 +167,15 @@ VAR_INST
 END_VAR
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[bEnableTrigger(CLK := bEnable);
+        <ST><![CDATA[
+rtReinit(CLK := bReinit);
+IF rtReinit.Q THEN
+    bReinitReq := TRUE;
+END_IF
+tonWrite(IN := TRUE, PT := tMinWriteInterval);
+bEnableTrigger(CLK := bEnable);
+
+
 CASE eState OF
 
 E_PersistentHandlerState.IDLE:
@@ -360,6 +364,7 @@ E_PersistentHandlerState.OPEN_WRITE:
 		   hFile => hFile);
 	
     IF NOT fbOpen.bBusy THEN
+		tOpen := TRUE;
         fbOpen(bExecute := FALSE);
 		
         IF fbOpen.bError THEN
@@ -404,6 +409,7 @@ E_PersistentHandlerState.WRITE_DATA:
 			bExecute := TRUE);
 	
     IF NOT fbWrite.bBusy THEN
+		tWritten := TRUE;
         fbWrite(bExecute := FALSE);
 		
         IF fbWrite.bError THEN
@@ -420,6 +426,7 @@ E_PersistentHandlerState.WRITE_DATA:
     END_IF
 
 E_PersistentHandlerState.WRITE_DONE:
+	tOpen := tWritten := tClosed := FALSE;
 	// done updating changed variables. continue monitoring
     nWriteCount := nWriteCount + 1;
     bAnyDirty   := FALSE;
@@ -431,6 +438,7 @@ E_PersistentHandlerState.CLOSE:
 	fbClose(sNetId := '', hFile := hFile, tTimeout := tTimeout, bExecute := TRUE);
 
 	IF NOT fbClose.bBusy THEN
+		tClosed := TRUE;
 		fbClose(bExecute := FALSE);
 		hFile := 0;
 		
