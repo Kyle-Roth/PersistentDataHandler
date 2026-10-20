@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="PersistentCaller" Id="{1d6c7289-79d4-45ba-a765-47310686d7f4}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM PersistentCaller
+VAR
+	persistanceHandler : FB_PersistentHandler;
+	enable	: BOOL := TRUE;
+	reinit	: BOOL := FALSE;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+persistanceHandler(bEnable := enable,
+				   bReinit := reinit);]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

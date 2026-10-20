@@ -6,6 +6,15 @@
 		<Contexts>
 			<Context>
 				<Id>0</Id>
+				<Name>PersistentTask</Name>
+				<ManualConfig>
+					<OTCID>#x02010040</OTCID>
+				</ManualConfig>
+				<Priority>1</Priority>
+				<CycleTime>1000000</CycleTime>
+			</Context>
+			<Context>
+				<Id>1</Id>
 				<Name>PlcTask</Name>
 				<ManualConfig>
 					<OTCID>#x02010030</OTCID>
@@ -15,6 +24,7 @@
 			</Context>
 		</Contexts>
 		<TaskPouOids>
+			<TaskPouOid Prio="1" OTCID="#x08502042"/>
 			<TaskPouOid Prio="20" OTCID="#x08502041"/>
 		</TaskPouOids>
 	</Instance>

@@ -162,9 +162,14 @@ eNext := eNextState;]]></ST>
     </Method>
     <Method Name="CyclicLogic" Id="{f3800e21-ea5d-4393-aace-c5f9716be621}" FolderPath="00 - Private Methods\">
       <Declaration><![CDATA[METHOD PRIVATE CyclicLogic : BOOL
+VAR
+	i : UDINT;
+	j : UDINT;
+END_VAR
 VAR_INST
 	bEnableTrigger : R_TRIG;
-END_VAR]]></Declaration>
+END_VAR
+]]></Declaration>
       <Implementation>
         <ST><![CDATA[bEnableTrigger(CLK := bEnable);
 CASE eState OF
@@ -315,7 +320,7 @@ E_PersistentHandlerState.MONITOR:
 			  DESTADDR := ADR(aTmp),
 			  READ     := TRUE,
 			  TMOUT    := tTimeout);
-	  
+	
 	IF NOT fbAdsRead.BUSY THEN
 		fbAdsRead(READ := FALSE);
 		
@@ -327,13 +332,13 @@ E_PersistentHandlerState.MONITOR:
 				aVars[nIndex].bDirty := TRUE;
 				bAnyDirty    := TRUE;
 			END_IF
-
+			
 			IF nIndex < nVarCount THEN
 				nIndex := nIndex + 1;
 			ELSE
 				nIndex := 1;                    // full pass complete
 			END_IF
-
+			
 			IF NOT bEnable OR bReinitReq THEN
 				bReady := FALSE;
 				eState := E_PersistentHandlerState.IDLE;
@@ -343,7 +348,7 @@ E_PersistentHandlerState.MONITOR:
 			END_IF
 		END_IF
 	END_IF
-
+	
 E_PersistentHandlerState.OPEN_WRITE:
 	// open file to write persistent variables that have been changed
     fbOpen(sNetId := '',

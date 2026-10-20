@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <Task Name="PersistentTask" Id="{7aeec949-1b3e-402a-8fd3-012eaa3f9e9a}">
+    <!--CycleTime in micro seconds.-->
+    <CycleTime>1000</CycleTime>
+    <Priority>1</Priority>
+    <PouCall>
+      <Name>PersistentCaller</Name>
+    </PouCall>
+    <TaskFBGuid>{f8f11ad2-f943-4a03-aca0-e5ba21bb8dfb}</TaskFBGuid>
+    <Fb_init>{f4cb9c54-b4f8-4213-97d3-1c2a3d7e75e2}</Fb_init>
+    <Fb_exit>{378b2e1b-4b4b-488f-a01f-3491dee07cde}</Fb_exit>
+    <CycleUpdate>{bc1c5e7f-f318-476e-8713-08e1eb6e77a5}</CycleUpdate>
+    <PostCycleUpdate>{4acb5eeb-a67b-4caa-a51b-78a7ab1851be}</PostCycleUpdate>
+  </Task>
+</TcPlcObject>

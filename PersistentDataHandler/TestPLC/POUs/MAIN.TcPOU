@@ -4,19 +4,17 @@
     <Declaration><![CDATA[PROGRAM MAIN
 VAR
 	example : FB_Example;
+	filler : ARRAY[0..130] OF FB_Example;
 	
 	wroteData : BOOL;
 	loadedData : BOOL;
-	
-	persistanceHandler : FB_PersistentHandler;
-	enable	: BOOL := TRUE;
-	reinit	: BOOL := FALSE;
+END_VAR
+VAR PERSISTENT
+	per_example : FB_Example;
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[
-persistanceHandler(bEnable := enable,
-				   bReinit := reinit);]]></ST>
+      <ST><![CDATA[]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
